@@ -1,0 +1,146 @@
+import nmap
+import os
+import subprocess
+import time
+import psutil
+from pymetasploit3.msfrpc import MsfRpcClient
+
+#fonction
+def is_msf_running():
+    """Vérifie si msfrpcd est déjà en cours d'exécution."""
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        if 'msfrpcd' in proc.info['cmdline']:
+            return True
+    return False
+
+def start_msfrpcd(user="msf", password="toor"):
+    """Démarre le service msfrpcd s'il n'est pas déjà lancé."""
+    if is_msf_running():
+        print(f"{YELLOW}[i] msfrpcd est déjà en cours d'exécution.{RESET}")
+        return
+    print(f"{CYAN}[+] Démarrage de msfrpcd...{RESET}")
+    subprocess.Popen(["msfrpcd", "-U", user, "-P", password, "-S"], stdout=subprocess.DEVNULL)
+    time.sleep(5)  # Attente du démarrage
+
+def scan_and_find_exploits():
+    print(f"{CYAN}Démarrage du scan réseau...{RESET}")
+    nm = nmap.PortScanner()
+    nm.scan(hosts='192.168.10.0/24', arguments='-O -sV -n --spoof-mac 0')
+
+    hosts = nm.all_hosts()
+    print(f"\n{GREEN}Hôtes détectés : {len(hosts)}{RESET}")
+    print("=" * 60)
+
+    # Connexion RPC à Metasploit
+    try:
+        client = MsfRpcClient('toor')  # change 'toor' si tu as un autre mot de passe
+    except Exception as e:
+        print(f"{RED}[!] Échec de la connexion à Metasploit : {e}{RESET}")
+        return
+
+    for host in hosts:
+        hostname = nm[host].hostname() or "Inconnu"
+        print(f"\n{YELLOW}Hôte : {host} ({hostname}){RESET}")
+
+        os_info = "Inconnu"
+        if 'osmatch' in nm[host] and nm[host]['osmatch']:
+            os_info = nm[host]['osmatch'][0]['name']
+            print(f"  ↳ {GREEN}OS détecté : {os_info}{RESET}")
+        else:
+            print(f"  ↳ {RED}OS non détecté ou inconnu{RESET}")
+
+        protocols = nm[host].all_protocols()
+        if protocols:
+            print(f"\n  {CYAN}Ports ouverts :{RESET}")
+            for proto in protocols:
+                ports = sorted(nm[host][proto].keys())
+                for port in ports:
+                    service = nm[host][proto][port]
+                    name = service['name']
+                    product = service.get('product', '')
+                    version = service.get('version', '')
+                    version_str = f"{product} {version}".strip()
+                    print(f"    - {proto.upper()} {port:>5} : {name} ({version_str})")
+
+                    # Recherche de modules dans Metasploit
+                    if product and version:
+                        search_term = f"{product} {version}"
+                        print(f"\n  {CYAN}[+] Recherche de vulnérabilités pour : {search_term}{RESET}")
+                        modules = client.modules.search(search_term)
+
+                        if modules:
+                            print(f"  {GREEN}[!] Modules trouvés :{RESET}")
+                            for mod in modules:
+                                print(f"    - {mod['fullname']} ({mod['name']})")
+                        else:
+                            print(f"  {RED}[-] Aucun module trouvé pour : {search_term}{RESET}")
+        else:
+            print(f"  {RED}Aucun port ouvert détecté.{RESET}")
+
+    print(f"\n{CYAN}Scan terminé.{RESET}")
+
+
+
+
+
+
+print("Cyber-box\n")
+os.system('cls' if os.name == 'nt' else 'clear')
+
+print(r"""
+  _____      _                 ____
+ / ____|    | |               |  _ \
+| |    _   _| |__   ___ _ __  | |_) | _____  __
+| |   | | | | '_ \ / _ \ '__| |  _ < / _ \ \/ /
+| |___| |_| | |_) |  __/ |    | |_) | (_) >  <
+ \_____\__, |_.__/ \___|_|    |____/ \___/_/\_\
+        __/ |
+       |___/
+""")
+
+
+# Choisir le type de scan
+rep = input("Type de scan : [1] Scan réseau [2] Scan IP :")
+
+# Couleurs ASCII de base (si tu veux éviter d'utiliser colorama)
+RED = "\033[91m"
+GREEN = "\033[92m"
+CYAN = "\033[96m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
+
+if rep == "1":
+    start_msfrpcd()  # Démarre le service msfrpcd si nécessaire
+    scan_and_find_exploits()
+
+elif rep == "2":
+    ip_cible = input("Entrez l'IP à scanner : ")
+    print(f"Démarrage scan de l'IP : {ip_cible}")
+    nm = nmap.PortScanner()
+    # Ajout de -O et -sV
+    nm.scan(hosts=ip_cible, arguments='-sS -O -sV')
+
+    if ip_cible in nm.all_hosts():
+        print(f"Scan de l'IP {ip_cible} terminé")
+        print("=" * 60)
+
+        # OS detection
+        if 'osmatch' in nm[ip_cible] and nm[ip_cible]['osmatch']:
+            print("Système(s) d’exploitation détecté(s) :")
+            for os in nm[ip_cible]['osmatch']:
+                print(f"  - {os['name']} (probabilité : {os['accuracy']}%)")
+        else:
+            print("Système d’exploitation non détecté ou insuffisamment fiable.")
+
+        # Ports et services
+        for protocol in nm[ip_cible].all_protocols():
+            print(f"Protocoles ouverts ({protocol}) :")
+            ports = nm[ip_cible][protocol].keys()
+            for port in ports:
+                service = nm[ip_cible][protocol][port]
+                print(f"  - Port {port} : {service['name']} ({service.get('product', 'inconnu')} {service.get('version', '')})")
+    else:
+        print(f"Pas de réponse de {ip_cible}")
+
+else:
+    print("Option non valide.")
